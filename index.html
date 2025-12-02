@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>FocusChef Demo</title>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <h1>FocusChef AI Demo</h1>
+    <video id="camera" width="300" autoplay playsinline></video>
+    <p id="result">Model yükleniyor...</p>
+
+    <script type="module">
+      import * as tmImage from "https://teachablemachine.withgoogle.com/tm-image/latest.js";
+
+      const modelURL = "MODEL_URL_HERE/model.json";
+      const metadataURL = "MODEL_URL_HERE/metadata.json";
+
+      let model, webcam;
+
+      async function init() {
+        model = await tmImage.load(modelURL, metadataURL);
+
+        webcam = new tmImage.Webcam(300, 300, true);
+        await webcam.setup();
+        await webcam.play();
+
+        document.getElementById("camera").srcObject = webcam.webcam;
+
+        window.requestAnimationFrame(loop);
+      }
+
+      async function loop() {
+        webcam.update();
+        const predictions = await model.predict(webcam.canvas);
+        document.getElementById("result").innerText =
+          predictions[0].className + " : " + predictions[0].probability.toFixed(2);
+        window.requestAnimationFrame(loop);
+      }
+
+      init();
+    </script>
+  </body>
+</html>
