@@ -1,43 +1,193 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>FocusChef Demo</title>
     <meta charset="UTF-8" />
+    <title>FocusChef V1 Demo</title>
+
+    <!-- Teachable Machine için gerekli scriptler -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest"></script>
+
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        background: #111;
+        color: #f5f5f5;
+        text-align: center;
+        padding: 16px;
+      }
+      h1 {
+        margin-bottom: 8px;
+      }
+      .card {
+        border: 1px solid #333;
+        border-radius: 12px;
+        padding: 12px;
+        margin: 10px auto;
+        max-width: 420px;
+        background: #181818;
+      }
+      #webcam-container canvas,
+      #upload-image {
+        max-width: 100%;
+        border-radius: 8px;
+      }
+      .risk {
+        font-weight: 600;
+        margin-top: 4px;
+      }
+      button,
+      input[type="file"] {
+        margin: 8px 0;
+      }
+    </style>
   </head>
   <body>
     <h1>FocusChef AI Demo</h1>
-    <video id="camera" width="300" autoplay playsinline></video>
-    <p id="result">Model yükleniyor...</p>
+    <p>Teachable Machine modeli ile kamera + fotoğraf + risk analizi</p>
 
-    <script type="module">
-      import * as tmImage from "https://teachablemachine.withgoogle.com/tm-image/latest.js";
+    <!-- KAMERA KISMI -->
+    <div class="card">
+      <h2>1) Canlı Kamera Analizi</h2>
+      <button onclick="initCamera()">Kamerayı Başlat</button>
+      <div id="webcam-container"></div>
+      <div id="camera-prediction"></div>
+      <div id="camera-risk" class="risk"></div>
+    </div>
 
-   const modelURL = "https://teachablemachine.withgoogle.com/models/NixqQTVRW/model.json";
-const metadataURL = "https://teachablemachine.withgoogle.com/models/NixqQTVRW/metadata.json";
+    <!-- FOTOĞRAF YÜKLEME KISMI -->
+    <div class="card">
+      <h2>2) Fotoğraftan Analiz</h2>
+      <input type="file" id="file-input" accept="image/*" />
+      <div id="upload-container">
+        <img id="upload-image" style="display:none;" />
+      </div>
+      <div id="upload-prediction"></div>
+      <div id="upload-risk" class="risk"></div>
+    </div>
 
-      let model, webcam;
+    <script>
+      // ====== 0) SENİN MODEL URL'İN ======
+      const URL = "https://teachablemachine.withgoogle.com/models/NixqQTVRW/";
 
-      async function init() {
+      let model, maxPredictions;
+      let webcam; // kamera objesi
+
+      // ====== 1) RİSK HARİTASI ======
+      // Buradaki anahtarlar Teachable Machine'deki sınıf isimleriyle
+      // birebir aynı olmalı (boşluk / küçük-büyük harf dahil).
+      const riskMap = {
+        "kahverengi kesme tahtası":
+          "Düşük risk – kahverengi tahta (ör: pişmiş ürünler / genel kullanım).",
+        "sarı kesme tahtası":
+          "Orta risk – genelde tavuk/piliç için kullanılır, yanlış üründe kontaminasyon riski doğar.",
+        "beyaz kesme tahtası":
+          "Düşük risk – süt ürünleri / unlu mamuller için uygundur.",
+        "mavi kesme tahtası":
+          "Orta risk – balık ve deniz ürünlerine ayrılmıştır, çapraz bulaşmaya dikkat.",
+        "kırmızı kesme tahtası":
+          "Kritik – çiğ kırmızı et için ayrılmıştır, yanlış kullanımda yüksek kontaminasyon riski."
+      };
+
+      function getRiskText(className) {
+        if (riskMap[className]) {
+          return "Risk değerlendirmesi: " + riskMap[className];
+        }
+        return "Risk değerlendirmesi: Bu sınıf için özel açıklama tanımlanmadı (demo).";
+      }
+
+      // ====== 2) MODELİ YÜKLE ======
+      async function loadModel() {
+        if (model) return; // daha önce yüklendiyse tekrar yükleme
+
+        const modelURL = URL + "model.json";
+        const metadataURL = URL + "metadata.json";
+
         model = await tmImage.load(modelURL, metadataURL);
-
-        webcam = new tmImage.Webcam(300, 300, true);
-        await webcam.setup();
-        await webcam.play();
-
-        document.getElementById("camera").srcObject = webcam.webcam;
-
-        window.requestAnimationFrame(loop);
+        maxPredictions = model.getTotalClasses();
+        console.log("Model yüklendi, sınıf sayısı:", maxPredictions);
       }
 
-      async function loop() {
+      // ====== 3) KAMERA İÇİN ======
+      async function initCamera() {
+        try {
+          await loadModel();
+
+          const flip = true; // selfie için aynalama
+          webcam = new tmImage.Webcam(300, 300, flip);
+          await webcam.setup();
+          await webcam.play();
+
+          const container = document.getElementById("webcam-container");
+          container.innerHTML = "";
+          container.appendChild(webcam.canvas);
+
+          window.requestAnimationFrame(loopCamera);
+        } catch (err) {
+          console.error(err);
+          alert(
+            "Kamera açılamadı veya model yüklenemedi. Safari kamera izinlerini kontrol et."
+          );
+        }
+      }
+
+      async function loopCamera() {
         webcam.update();
-        const predictions = await model.predict(webcam.canvas);
-        document.getElementById("result").innerText =
-          predictions[0].className + " : " + predictions[0].probability.toFixed(2);
-        window.requestAnimationFrame(loop);
+        await predictFromSource(webcam.canvas, "camera");
+        window.requestAnimationFrame(loopCamera);
       }
 
-      init();
+      // Ortak tahmin fonksiyonu (kamera + upload)
+      async function predictFromSource(source, mode) {
+        const prediction = await model.predict(source);
+        prediction.sort((a, b) => b.probability - a.probability);
+        const best = prediction[0];
+
+        const text =
+          "Sınıf: " +
+          best.className +
+          " — Olasılık: " +
+          best.probability.toFixed(2);
+
+        if (mode === "camera") {
+          document.getElementById("camera-prediction").innerText = text;
+          document.getElementById("camera-risk").innerText = getRiskText(
+            best.className
+          );
+        } else if (mode === "upload") {
+          document.getElementById("upload-prediction").innerText = text;
+          document.getElementById("upload-risk").innerText = getRiskText(
+            best.className
+          );
+        }
+      }
+
+      // ====== 4) FOTOĞRAF YÜKLEME İÇİN ======
+      const fileInput = document.getElementById("file-input");
+      const uploadImage = document.getElementById("upload-image");
+
+      fileInput.addEventListener("change", async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+          await loadModel();
+
+          const reader = new FileReader();
+          reader.onload = async (event) => {
+            uploadImage.src = event.target.result;
+            uploadImage.style.display = "block";
+
+            uploadImage.onload = async () => {
+              await predictFromSource(uploadImage, "upload");
+            };
+          };
+          reader.readAsDataURL(file);
+        } catch (err) {
+          console.error(err);
+          alert("Fotoğraftan analiz yapılamadı.");
+        }
+      });
     </script>
   </body>
 </html>
